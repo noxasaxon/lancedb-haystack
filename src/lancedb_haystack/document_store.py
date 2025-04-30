@@ -14,7 +14,7 @@ from haystack.document_stores.types import DocumentStore, DuplicatePolicy
 from lancedb_haystack.conversion.lancedb_to_python import convert_lancedb_to_document
 from lancedb_haystack.conversion.python_to_lancedb import convert_document_to_lancedb
 from lancedb_haystack.filters import convert_filters_to_where_clause, in_
-from lancedb_haystack.schema.serialization import dict_to_pyarrow_struct, pyarrow_struct_to_dict
+from lancedb_haystack.schema.serialization import dict_to_pyarrow_struct, pyarrow_schema_to_dict, pyarrow_struct_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class LanceDBDocumentStore(DocumentStore):
         self,
         database: str,
         table_name: str,
-        metadata_schema: Optional[pa.StructType] = None,
+        metadata_schema: Optional[pa.StructType | pa.Schema] = None,
         embedding_dims: Optional[int] = None,
     ):
         """Creates a LanceDBDocumentStore backed by the specified database and table_name.
@@ -243,7 +243,11 @@ class LanceDBDocumentStore(DocumentStore):
             schema = table.schema
         else:
             # If the table doesn't already exist, then we use the metadata schema provided in the constructor
-            schema = _create_schema(self._metadata_schema, self._embedding_dims)
+            if not isinstance(self._metadata_schema, pa.Schema):
+                schema = _create_schema(self._metadata_schema, self._embedding_dims)
+            else:
+                schema = self._metadata_schema
+
             table = self.db.create_table(name=self._table_name, schema=schema, on_bad_vectors="fill", fill_value=0)
 
         # TODO: add something here that would handle the inferring schema from first document.
@@ -295,11 +299,18 @@ class LanceDBDocumentStore(DocumentStore):
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes this store to a dictionary."""
+        schema_as_dict = None
+        if self._metadata_schema:
+            if isinstance(self._metadata_schema, pa.StructType):
+                schema_as_dict = pyarrow_struct_to_dict(self._metadata_schema)
+            elif isinstance(self._metadata_schema, pa.Schema):
+                schema_as_dict = pyarrow_schema_to_dict(self._metadata_schema)
+
         data = default_to_dict(
             self,
             database=self._database,
             table_name=self._table_name,
-            metadata_schema=pyarrow_struct_to_dict(self._metadata_schema) if self._metadata_schema else None,
+            metadata_schema=schema_as_dict,
             embedding_dims=self._embedding_dims,
         )
         return data
